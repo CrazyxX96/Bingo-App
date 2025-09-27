@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Bingoschein anlegen & prüfen</title>
+
+  <!-- Manifest & PWA -->
+  <link rel="manifest" href="./manifest.webmanifest">
+  <meta name="theme-color" content="#2F4A93">
+
+  <!-- iOS: Vollbild & Icon -->
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="Bingo">
+  <link rel="apple-touch-icon" href="./icons/apple-touch-icon.png">
+
+  <!-- Externe OCR-Bibliothek -->
+  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.1.0/dist/tesseract.min.js"></script>
+
+  <style>
+    :root{
+      --max-cards: 50;
+      --strike-color: #CA3228;
+      --accent: #2F4A93;
+      --handle:#00BCD4;
+      --table-max: 580px; /* maximale Breite aller Tabellen */
+    }
+
+    body{font-family:system-ui,Arial,sans-serif;margin:12px;text-align:center}
+
+    .section-title{
+      text-align:center;text-decoration:underline;font-size:20px;
+      margin:20px 0 12px;background:#2F4A93;padding:6px 0;border-radius:4px;color:#fff;
+    }
+    .bar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;justify-content:center;margin:10px 0}
+    input,button{font-size:16px;padding:8px 10px;border-radius:8px;border:1px solid #ccc}
+    button{background:#f6f6f6;cursor:pointer}
+
+    table{border-collapse:collapse;width:min(100%,var(--table-max));table-layout:fixed;margin:0 auto}
+    th,td{text-align:center;vertical-align:middle;border:2px solid #444}
+    th{background:#9DCA43;color:#fff;font-size:20px;height:44px}
+    td{height:56px;font-size:16px}
+    input.cell-inp{width:94%;height:90%;font-size:16px;line-height:1.2;text-align:center;border:none;outline:none;background:transparent}
+
+    /* Gezogene-Zahlen Tabelle */
+    #drawnGridTable th{background:#000;color:#fff}
+    #drawnGridTable td{height:44px}
+    .number-badge{display:inline-block;border-radius:4px;padding:2px 6px;font-size:14px}
+    .hit-badge{background:#ffff99}
+    .miss-badge{background:#E5E2D9}
+
+    .status-bar{margin:10px 0;font-weight:700}
+    .status-bingo{background:#ffff00;padding:6px 10px;border-radius:6px;display:inline-block}
+  </style>
+</head>
+<body>
+
+<h2 id="top" class="section-title">Schein anlegen</h2>
+<div class="table-wrap">
+  <table id="inputTable">
+    <thead><tr><th>B</th><th>I</th><th>N</th><th>G</th><th>O</th></tr></thead>
+    <tbody id="inputBody">
+      <script>
+        const COL_RANGES_INPUT=[[1,15],[16,30],[31,45],[46,60],[61,75]];
+        document.write(
+          Array(5).fill('').map(() =>
+            '<tr>'+COL_RANGES_INPUT.map(([min,max]) =>
+              `<td><input class="cell-inp" type="number" min="${min}" max="${max}" placeholder="${min}-${max}"></td>`
+            ).join('')+'</tr>'
+          ).join('')
+        );
+      </script>
+    </tbody>
+  </table>
+</div>
+<div class="bar">
+  <input id="cardName" type="text" placeholder="Scheinname">
+  <input id="serialNo" type="text" placeholder="Seriennummer">
+  <input id="ticketNo" type="text" placeholder="Losnummer">
+</div>
+<div class="bar">
+  <button id="saveBtn">💾 Schein speichern</button>
+  <button id="clearBtn">♻️ Alles zurücksetzen</button>
+</div>
+<div id="formError"></div>
+<div id="saveSuccess"></div>
+<div class="count muted" id="countInfo">Gespeicherte Scheine: 0 / 50</div>
+
+<!-- Gezogene Zahlen -->
+<div style="margin-top:24px"></div>
+<h2 class="section-title">Gezogene Zahlen eintragen & prüfen</h2>
+<div class="bar">
+  <label for="drawn">Gezogene Zahl(en):</label>
+  <input id="drawn" type="text" placeholder="z.B.16,22,37">
+</div>
+<div class="bar">
+  <button id="markBtn">🔍 Jetzt prüfen</button>
+  <button id="resetMarksBtn">🔄 Zahlen zurücksetzen</button>
+</div>
+<div class="status-bar" id="status">Noch kein Bingo<br><div class="status-sub">(Prüfung läuft über alle Scheine)</div></div>
+<div id="drawError"></div>
+<div id="successMsg"></div>
+<div id="drawnList">Gezogene Zahlen (0): –</div>
+
+<div class="drawn-grid-wrap" style="margin-top:24px">
+  <table id="drawnGridTable">
+    <thead><tr><th>B</th><th>I</th><th>N</th><th>G</th><th>O</th></tr></thead>
+    <tbody id="drawnGridBody">
+      <tr><td colspan="5">– keine Zahlen –</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<!-- Legende -->
+<div class="bar" style="margin-top:24px">
+  <button id="toggleLegendBtn">Legende anzeigen</button>
+</div>
+<div id="legend" class="text-center d-none">
+  <span class="number-badge hit-badge">&nbsp;&nbsp;&nbsp;</span> = Zahl ist auf mindestens einem gespeicherten Schein<br>
+  <span class="number-badge miss-badge">&nbsp;&nbsp;&nbsp;</span> = Zahl ist auf keinem gespeicherten Schein
+</div>
+
+<script>
+(function(){
+  let allDrawnNumbers=[];
+  const drawnList=document.getElementById('drawnList');
+  const drawnGridBody=document.getElementById('drawnGridBody');
+  const toggleLegendBtn=document.getElementById('toggleLegendBtn');
+  const legend=document.getElementById('legend');
+
+  function renderDrawnGrid(){
+    const cols=[[],[],[],[],[]];
+    for(const s of allDrawnNumbers){
+      const n=parseInt(s,10);
+      if(n<=15) cols[0].push(n);
+      else if(n<=30) cols[1].push(n);
+      else if(n<=45) cols[2].push(n);
+      else if(n<=60) cols[3].push(n);
+      else if(n<=75) cols[4].push(n);
+    }
+    cols.forEach(c=>c.sort((a,b)=>a-b));
+    const rows=Math.max(...cols.map(c=>c.length),0);
+    let html='';
+    for(let r=0;r<rows;r++){
+      html+='<tr>';
+      for(let c=0;c<5;c++){
+        const v=cols[c][r];
+        if(v){
+          // hier nur Beispiel: alle gelb markieren
+          html+=`<td><span class="number-badge hit-badge">${v}</span></td>`;
+        } else html+='<td>&nbsp;</td>';
+      }
+      html+='</tr>';
+    }
+    if(rows===0) html='<tr><td colspan="5">– keine Zahlen –</td></tr>';
+    drawnGridBody.innerHTML=html;
+    drawnList.textContent=`Gezogene Zahlen (${allDrawnNumbers.length}):`;
+  }
+
+  document.getElementById('markBtn').addEventListener('click',()=>{
+    allDrawnNumbers.push(String(Math.floor(Math.random()*75)+1));
+    renderDrawnGrid();
+    if(allDrawnNumbers.length>0){ toggleLegendBtn.style.display='inline-block'; }
+  });
+  document.getElementById('resetMarksBtn').addEventListener('click',()=>{
+    allDrawnNumbers=[]; renderDrawnGrid(); toggleLegendBtn.style.display='none'; legend.classList.add('d-none'); toggleLegendBtn.textContent='Legende anzeigen';
+  });
+
+  toggleLegendBtn.addEventListener('click',()=>{
+    if(legend.classList.contains('d-none')){
+      legend.classList.remove('d-none');
+      toggleLegendBtn.textContent='Legende ausblenden';
+    } else {
+      legend.classList.add('d-none');
+      toggleLegendBtn.textContent='Legende anzeigen';
+    }
+  });
+})();
+</script>
+
+<!-- Service Worker Registrierung -->
+<script>
+  if('serviceWorker' in navigator){
+    window.addEventListener('load',()=>{
+      navigator.serviceWorker.register('./sw.js',{scope:'./'}).catch(console.error);
+    });
+  }
+</script>
+</body>
+</html>
