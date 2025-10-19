@@ -1,0 +1,1146 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Bingoscheine Prüfen</title>
+<meta name="color-scheme" content="light dark" />
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.1.0/dist/tesseract.min.js" crossorigin="anonymous"></script>
+<style>
+  :root{
+    --bg:#f7f7f8; --card:#ffffff; --text:#111; --muted:#6b7280; --line:#e5e7eb; --accent:#111; --radius:16px;
+    --hit:#ffff00;
+    --status-neutral:#f3f4f6; --status-neutral-border:#e5e7eb;
+    --status-win:#fff7ae; --status-win-border:#f1e58f;
+    --error:#ef4444;
+    --mini-cell:44px; --mini-head:36px;
+    --handle:#00BCD4;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{
+      --bg:#0b0c0f; --card:#121419; --text:#f3f4f6; --muted:#9aa0a6; --line:#22252b; --accent:#fafafa;
+      --status-neutral:#1f2937; --status-neutral-border:#374151;
+      --status-win:#3a3400; --status-win-border:#5a5200;
+    }
+  }
+  @media (max-width:480px){ :root{ --mini-cell:36px; --mini-head:30px; } }
+
+  *{box-sizing:border-box}
+  body{margin:0;font:16px/1.4 system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial}
+  .app{min-height:100dvh;background:var(--bg);padding-bottom:84px}
+  header{position:sticky;top:0;background:color-mix(in oklab, var(--card) 85%, transparent);backdrop-filter:saturate(1.2) blur(8px);border-bottom:1px solid var(--line);z-index:10}
+  .wrap{max-width:1000px;margin:0 auto;padding:16px}
+  h1{margin:0;font-size:20px;color:var(--text)}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);box-shadow:0 4px 18px rgba(0,0,0,.06)}
+  .card .inner{padding:16px}
+  .subtitle{color:var(--muted);margin-top:2px;font-size:14px}
+
+  .grid{display:grid;grid-template-columns:repeat(5,1fr)}
+  .grid .head{text-align:center;font-weight:700;color:#fff;background:var(--accent);padding:10px 0}
+  .grid .cell{border-right:1px solid var(--line);border-bottom:1px solid var(--line)}
+  .grid .cell:nth-child(5n){border-right:0}
+  .grid input{width:100%;height:48px;border:0;text-align:center;font-weight:600;font-size:18px;background:transparent;color:var(--text);outline:none}
+  .grid input.invalid{border:2px solid var(--error);border-radius:10px;background:color-mix(in oklab, var(--error) 6%, transparent);}
+
+  .hit{background:var(--hit)}
+
+  .mini-head{grid-column:1/6;display:grid;grid-template-columns:repeat(5,1fr)}
+  .mini-head span{background:var(--accent);color:#fff;font-weight:700;height:var(--mini-head);display:flex;align-items:center;justify-content:center}
+  .board-mini{position:relative;display:grid;grid-template-columns:repeat(5,1fr);grid-auto-rows:var(--mini-cell);border:1px solid var(--line);border-radius:12px;overflow:hidden}
+  .board-mini div{display:flex;align-items:center;justify-content:center;border-right:1px solid var(--line);border-bottom:1px solid var(--line);font-weight:600}
+  .board-mini div:nth-child(5n){border-right:0}
+  .win-lines{position:absolute;inset:0;pointer-events:none}
+
+  .picker{display:grid;grid-template-columns:repeat(5,1fr)}
+  .picker .head{text-align:center;font-weight:700;color:#fff;background:var(--accent);padding:10px 0}
+  .picker .num{border-right:1px solid var(--line);border-bottom:1px solid var(--line);padding:10px 0;text-align:center;cursor:pointer}
+  .picker .num:nth-child(5n){border-right:0}
+  .picker .num.selected{background:var(--hit)}
+
+  .form{display:grid;gap:12px;grid-template-columns:repeat(2,minmax(0,1fr));margin-top:16px}
+  .field{display:grid;gap:6px}
+  .label{font-size:14px;color:var(--muted)}
+  .input{height:42px;border:1px solid var(--line);background:transparent;color:var(--text);border-radius:10px;padding:0 12px;outline:none}
+  .row{display:flex;gap:10px;flex-wrap:wrap;margin-top:14px}
+  .row.center{justify-content:center}
+  .btn{appearance:none;border:1px solid var(--line);background:var(--card);color:var(--text);padding:10px 14px;border-radius:12px;cursor:pointer;display:inline-flex;gap:8px;align-items:center}
+  .btn.primary{background:var(--accent);color:#fff;border-color:var(--accent)}
+  .badge{background:#ef4444;color:#fff;border-radius:999px;padding:2px 8px;font-size:12px;font-weight:700}
+
+  .tabs{position:fixed;left:0;right:0;bottom:0;border-top:1px solid var(--line);background:color-mix(in oklab, var(--card) 90%, transparent);backdrop-filter:saturate(1.2) blur(8px);z-index:20}
+  .tabs ul{list-style:none;margin:0 auto;padding:0;display:grid;grid-template-columns:repeat(4,1fr);max-width:620px}
+  .tabs button{width:100%;padding:12px 0;background:none;border:0;color:#999;display:flex;align-items:center;justify-content:center;gap:8px}
+  .tabs .active{color:var(--text);position:relative}
+  .tabs .active::before{content:"";position:absolute;top:-2px;width:34px;height:4px;background:var(--accent);border-radius:999px}
+  .tab-label{display:none}@media(min-width:480px){.tab-label{display:inline}}
+
+  .page{display:none;animation:fade .2s ease-out}
+  .page.active{display:block}
+  @keyframes fade{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+
+  .grid-tiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px;align-items:stretch}
+  .grid-tiles .card{height:100%; margin-top:0}
+  .grid-tiles .card .inner{display:flex;flex-direction:column;height:100%}
+  .ticket-actions{margin-top:auto;display:flex;gap:10px;justify-content:center}
+
+  .title-row{display:flex;align-items:center;justify-content:space-between;gap:12px}
+  .muted{color:#6b7280}
+
+  .status{border:1px solid var(--status-neutral-border);background:var(--status-neutral);border-radius:12px;padding:12px;text-align:center}
+  .status.win{border-color:var(--status-win-border);background:var(--status-win)}
+  .status .title{font-weight:800}
+  .status .sub{opacity:.9}
+
+  .cell.clickable{cursor:pointer}
+  .counterbar{display:block;width:100%;padding:10px 12px;margin:0;background:var(--status-neutral);border:1px solid var(--status-neutral-border);border-radius:12px;text-align:center;font-weight:600}
+
+  .page > .card + .card{ margin-top:12px; }
+  .card.tiny{display:table;margin:12px auto}
+  .card.tiny .inner{padding:6px 12px}
+  .spaced > * + * { margin-top:12px; }
+  .empty-center{grid-column:1/-1;display:flex;justify-content:center;margin:12px auto}
+
+  .date-line{min-height:20px}
+  .badge-row{height:32px;display:flex;align-items:center;justify-content:center;margin-top:6px}
+  .badge-row .badge{display:inline-block}
+
+  /* Foto-Bereich mittig ausrichten */
+  .photo-bar{
+    display:grid;
+    grid-template-columns: 1fr;
+    gap:8px;
+    align-items:start;
+    justify-items:center;
+    text-align:center;
+  }
+  .photo-actions{
+    display:flex;
+    gap:8px;
+    flex-wrap:wrap;
+    justify-content:center;
+  }
+  .hint{font-size:13px;color:var(--muted);margin-top:8px;text-align:center}
+
+  /* Foto-Stufe */
+  #photoStage{
+    position:relative; max-width:100%; width:100%; aspect-ratio:4/3;
+    background:#fafafa; border:1px dashed #bbb; border-radius:12px; overflow:hidden;
+    user-select:none; -webkit-user-select:none; touch-action:none; margin-top:10px;
+  }
+  #photoStage img{ position:absolute; inset:0; width:100%; height:100%; object-fit:contain; pointer-events:none; }
+  .crop-overlay{ position:absolute; inset:0; pointer-events:none; }
+  .crop-rect{
+    position:absolute; border:3px solid var(--handle);
+    box-shadow:0 0 0 9999px rgba(0,0,0,.35);
+    pointer-events:auto; cursor:move; transform-origin:center center; touch-action:none; z-index:5;
+  }
+  .grid-line{ position:absolute; background:rgba(255,255,255,.9); }
+  .handle{
+    position:absolute; width:28px; height:28px; background:var(--handle);
+    border:2px solid #fff; border-radius:50%; box-shadow:0 1px 4px rgba(0,0,0,.4);
+    cursor:grab; touch-action:none; z-index:6;
+  }
+  .handle.tl{ left:0; top:0; transform:translate(-50%,-50%); }
+  .handle.tr{ left:100%; top:0; transform:translate(50%,-50%); }
+  .handle.bl{ left:0; top:100%; transform:translate(-50%,50%); }
+  .handle.br{ left:100%; top:100%; transform:translate(50%,50%); }
+  .handle.rot{ width:26px; height:26px; background:#fff; border:3px solid var(--handle); border-radius:50%; position:absolute; left:50%; top:-28px; transform:translate(-50%,-50%); }
+  .angle-badge{ position:absolute; left:50%; top:-48px; transform:translate(-50%, -50%); background:rgba(47,74,147,.95); color:#fff; font-size:12px; padding:3px 7px; border-radius:6px; pointer-events:none; z-index:7; }
+  .d-none{display:none!important}
+  .no-scroll{ overflow:hidden; }
+
+  /* === Vollbild-Overlay (Progress) === */
+  .overlay{ position:fixed; inset:0; background:rgba(0,0,0,.45); backdrop-filter:saturate(1.2) blur(4px); display:flex; align-items:center; justify-content:center; z-index:9999; }
+  .overlay-box{ background:var(--card); color:var(--text); border:1px solid var(--line); border-radius:16px; padding:20px 24px; width:min(520px,92vw); text-align:center; box-shadow:0 10px 30px rgba(0,0,0,.25); }
+  .overlay-title{ margin:0 0 8px 0; font-weight:800; }
+  .overlay-subtitle{ margin:6px 0 0 0; color:var(--muted); }
+
+  .spinner{ width:28px; height:28px; border:3px solid var(--line); border-top-color:var(--accent); border-radius:50%; margin:0 auto 12px; animation:spin 1s linear infinite; }
+  @keyframes spin{ to{ transform:rotate(360deg); } }
+
+  .progress { width:100%; margin:8px auto 0; padding:4px; border-radius:10px; border:1px solid var(--line); background:var(--status-neutral); position:relative; overflow:hidden; }
+  .progress-bar { height:14px; border-radius:8px; width:0%; background: linear-gradient(90deg, var(--accent) 0%, color-mix(in oklab, var(--accent) 70%, #fff) 100%); transition: width .2s ease; }
+  .progress-label{ margin-top:6px; font-size:12px; font-weight:600; }
+
+  /* === Zentrisches App-Modal (statt alert/confirm) === */
+  .modal-actions{ display:flex; gap:8px; justify-content:center; margin-top:16px; }
+  #appModalCancel{ display:none; } /* wird bei Confirm eingeblendet */
+</style>
+</head>
+<body>
+<div class="app">
+  <header><div class="wrap"><h1>Bingoscheine Prüfen</h1></div></header>
+
+  <main class="wrap" id="pages">
+    <section class="page active" id="page-schein">
+      <div class="card"><div class="inner"><div id="ticket-count-bar-small" class="counterbar"></div></div></div>
+
+      <div class="card"><div class="inner">
+        <h2 style="margin:0 0 6px 0">Foto importieren</h2>
+        <p class="subtitle">Lade ein Foto der Bingo-Zahlentabelle. Richte den 5×5-Bereich aus und lasse die Zahlen automatisch erkennen.</p>
+
+        <div class="photo-bar">
+          <input type="file" id="ocrFile" accept="image/*">
+          <div class="photo-actions">
+            <button class="btn d-none" id="alignBtn">📏 Zahlentabelle ausrichten</button>
+            <button class="btn d-none" id="removePhotoBtn">🧹 Foto entfernen</button>
+          </div>
+          <div class="hint">ℹ️ <strong>Tipp:</strong> Richte den Rahmen nur über die Zahlenfelder aus. Linien möglichst parallel ausrichten.</div>
+        </div>
+
+        <div id="photoStage" class="d-none">
+          <img id="photoImage" alt="Bingoschein">
+          <div class="crop-overlay d-none" id="cropOverlay">
+            <div id="cropRect" class="crop-rect" style="left:10%; top:10%; width:80%; height:80%;">
+              <div class="grid-line" data-g="v1"></div><div class="grid-line" data-g="v2"></div><div class="grid-line" data-g="v3"></div><div class="grid-line" data-g="v4"></div>
+              <div class="grid-line" data-g="h1"></div><div class="grid-line" data-g="h2"></div><div class="grid-line" data-g="h3"></div><div class="grid-line" data-g="h4"></div>
+              <div class="handle tl" data-h="tl"></div>
+              <div class="handle tr" data-h="tr"></div>
+              <div class="handle bl" data-h="bl"></div>
+              <div class="handle br" data-h="br"></div>
+              <div class="handle rot" data-h="rot" title="Drehen"></div>
+              <div class="angle-badge" id="angleBadge">0°</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- bleibt für Screenreader, visuell übernimmt Overlay/Modal -->
+        <div id="ocrStatus" class="subtitle" style="margin-top:8px"></div>
+      </div></div>
+
+      <!-- Erstellung -->
+      <div class="card"><div class="inner">
+        <div class="title-row"><h2 style="margin:0 0 6px 0">Schein erstellen</h2></div>
+        <div class="subtitle">BINGO-Nummern innerhalb der Spaltenbereiche eingeben oder automatisch erzeugen.</div>
+        <p class="subtitle" id="editInfo" style="display:none;color:#2563eb">Bearbeitungsmodus aktiv – „Schein speichern“ überschreibt den ausgewählten Schein. <button class="btn" id="cancelEdit" style="margin-left:8px">↩️ Abbrechen</button></p>
+
+        <div class="grid" style="margin-top:12px">
+          <div class="head">B</div><div class="head">I</div><div class="head">N</div><div class="head">G</div><div class="head">O</div>
+        </div>
+        <div id="board" class="grid" style="border:1px solid var(--line);border-top:0;border-radius:0 0 var(--radius) var(--radius);overflow:hidden"></div>
+
+        <div class="form">
+          <div class="field"><label class="label" for="name">Scheinname</label><input class="input" id="name" placeholder="z.B. Schein 1"></div>
+          <div class="field"><label class="label" for="datum">Datum</label><input class="input" id="datum" type="date"></div>
+          <div class="field"><label class="label" for="serien">Seriennummer</label><input class="input" id="serien"></div>
+          <div class="field"><label class="label" for="los">Losnummer</label><input class="input" id="los"></div>
+        </div>
+
+        <div class="row center">
+          <button class="btn primary" id="saveTicket">💾 Schein speichern</button>
+          <button class="btn" id="resetBoard">♻️ Bereich zurücksetzen</button>
+          <button class="btn" id="fillRandom">🎲 Zufällig füllen</button>
+        </div>
+      </div></div>
+    </section>
+
+    <section class="page" id="page-saved">
+      <div class="card"><div class="inner"><div id="ticket-count-bar-big" class="counterbar"></div></div></div>
+      <div class="card"><div class="inner">
+        <div class="title-row">
+          <h2 style="margin:0">Gespeicherte Scheine</h2>
+          <div><button class="btn" id="clearTickets">🗑️ Alle Scheine löschen</button></div>
+        </div>
+        <p class="subtitle">Zahlen, die als „gezogen“ markiert wurden, erscheinen gelb. BINGO-Linien werden rot überzogen.</p>
+        <div id="tickets" class="grid-tiles"></div>
+      </div></div>
+    </section>
+
+    <section class="page" id="page-draw">
+      <div class="card"><div class="inner"><div id="draw-count-bar" class="counterbar"></div></div></div>
+      <div class="card"><div class="inner">
+        <div class="title-row"><h2 style="margin:0 0 6px 0">Gezogene Zahlen eintragen</h2></div>
+        <p class="subtitle">Tipp: Mehrere Zahlen mit Komma oder Leerzeichen trennen. Gültig sind Zahlen von 1–75. Doppelte Zahlen werden ignoriert.</p>
+        <div class="row center">
+          <input class="input" id="drawInput" placeholder="z.B. 1, 6, 7, 14" inputmode="numeric">
+          <button class="btn primary" id="addDrawn">➕ Hinzufügen</button>
+        </div>
+      </div></div>
+
+      <div class="card tiny"><div class="inner" style="text-align:center"><strong>Oder</strong></div></div>
+
+      <div class="card"><div class="inner">
+        <h3 style="margin:0 0 6px 0">Gezogene Zahlen auswählen</h3>
+        <p class="subtitle">Tipp: Klicke auf die Zahlen, um sie zu den gezogenen Zahlen hinzuzufügen. Um eine oder alle Zahlen zu entfernen gehe zur Übersichtsseite.</p>
+        <div class="picker" id="pickerHeader">
+          <div class="head">B</div><div class="head">I</div><div class="head">N</div><div class="head">G</div><div class="head">O</div>
+        </div>
+        <div class="picker" id="pickerGrid" style="border:1px solid var(--line);border-top:0;border-radius:0 0 var(--radius) var(--radius);overflow:hidden"></div>
+      </div></div>
+    </section>
+
+    <section class="page" id="page-overview">
+      <div class="card"><div class="inner">
+        <div class="title-row"><h3 style="margin:0">Gezogene Zahlen</h3><button class="btn" id="clearDrawnOverview">🗑️ Alle Zahlen löschen</button></div>
+        <p class="subtitle">Tipp: Klicke auf eine Zahl in der Tabelle, um sie zu entfernen.</p>
+        <div class="grid" style="margin-top:8px"><div class="head">B</div><div class="head">I</div><div class="head">N</div><div class="head">G</div><div class="head">O</div></div>
+        <div id="overviewTable" class="grid" style="border:1px solid var(--line);border-top:0;border-radius:0 0 var(--radius) var(--radius);overflow:hidden"></div>
+      </div></div>
+
+      <div class="card" id="statusCard"><div class="inner spaced">
+        <h2 style="margin:0">Bingo-Ergebnisse</h2>
+        <div id="overview-count-tickets" class="counterbar"></div>
+        <div id="overview-count-status" class="counterbar"></div>
+        <div id="statusBox" class="status">
+          <div class="title" id="statusTitle">Noch kein Bingo</div>
+          <div class="sub" id="statusSub"></div>
+        </div>
+      </div></div>
+
+      <div class="card" id="winnersCard"><div class="inner">
+        <div class="title-row"><h3 style="margin:0">Gewonnene Scheine</h3></div>
+        <p class="subtitle" id="winnersSubtitle">Kein Schein mit Gewinn vorhanden</p>
+        <div id="winnersList" class="grid-tiles"></div>
+      </div></div>
+    </section>
+  </main>
+
+  <nav class="tabs" aria-label="Hauptnavigation">
+    <ul>
+      <li><button data-target="page-schein" class="active">🧩 <span class="tab-label">Erstellung</span></button></li>
+      <li><button data-target="page-saved">📄 <span class="tab-label">Scheine</span></button></li>
+      <li><button data-target="page-draw">🎲 <span class="tab-label">Zahlen</span></button></li>
+      <li><button data-target="page-overview">📊 <span class="tab-label">Übersicht</span></button></li>
+    </ul>
+  </nav>
+</div>
+
+<!-- === Vollbild-Overlay (Progress) === -->
+<div id="ocrOverlay" class="overlay d-none" role="dialog" aria-modal="true"
+     aria-labelledby="ocrOverlayTitle" aria-describedby="ocrOverlayStatus">
+  <div class="overlay-box">
+    <div class="spinner" aria-hidden="true"></div>
+    <h3 id="ocrOverlayTitle" class="overlay-title">Erkennung läuft…</h3>
+    <div class="progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" aria-label="Fortschritt">
+      <div id="ocrOLBar" class="progress-bar"></div>
+    </div>
+    <div id="ocrOLLabel" class="progress-label" aria-live="polite">0%</div>
+    <p id="ocrOverlayStatus" class="overlay-subtitle">Bitte warten…</p>
+  </div>
+</div>
+
+<!-- === Zentrisches App-Modal (Alert/Confirm) === -->
+<div id="appModal" class="overlay d-none" role="dialog" aria-modal="true"
+     aria-labelledby="appModalTitle" aria-describedby="appModalMsg">
+  <div class="overlay-box">
+    <h3 id="appModalTitle" class="overlay-title">Hinweis</h3>
+    <p id="appModalMsg" class="overlay-subtitle" style="margin-top:8px"></p>
+    <div class="modal-actions">
+      <button class="btn" id="appModalCancel">Abbrechen</button>
+      <button class="btn primary" id="appModalOk">OK</button>
+    </div>
+  </div>
+</div>
+
+<script>
+/* ===== App-Grundlogik ===== */
+const K_TICKETS="bingo_tickets", K_DRAWN="bingo_drawn", K_LAST_TOTAL="bingo_last_total_lines";
+const $=s=>document.querySelector(s), $$=s=>document.querySelectorAll(s);
+const COLS=[{key:"B",min:1,max:15},{key:"I",min:16,max:30},{key:"N",min:31,max:45},{key:"G",min:46,max:60},{key:"O",min:61,max:75}];
+const MAX_DRAWN_FOR_SUMMARY=22;
+const loadTickets=()=>JSON.parse(localStorage.getItem(K_TICKETS)||"[]");
+const saveTickets=a=>localStorage.setItem(K_TICKETS,JSON.stringify(a));
+const loadDrawn=()=>JSON.parse(localStorage.getItem(K_DRAWN)||"[]");
+const saveDrawn=a=>localStorage.setItem(K_DRAWN,JSON.stringify(a));
+const emptyBoard=()=>Array.from({length:5},()=>Array(5).fill(""));
+const rand=(a,b)=>Math.floor(Math.random()*(b-a+1))+a;
+function genRandomBoard(){const b=emptyBoard();COLS.forEach((c,ci)=>{const s=new Set();while(s.size<5)s.add(rand(c.min,c.max));[...s].forEach((n,ri)=>b[ri][ci]=String(n));});return b;}
+function getColIdx(n){if(n>=1&&n<=15)return 0; if(n<=30)return 1; if(n<=45)return 2; if(n<=60)return 3; if(n<=75)return 4; return -1;}
+function uniquePreserveOrder(arr){const out=[]; for(const n of arr){if(Number.isInteger(n)&&n>=1&&n<=75 && !out.includes(n)) out.push(n);} return out;}
+function formatDateDE(iso){ if(!iso) return ""; const m=/^(\d{4})-(\d{2})-(\d{2})$/.exec(iso); return m?`${m[3]}.${m[2]}.${m[1]}`:iso; }
+
+function ticketCountText(n){ if(n===0) return "Kein Schein gespeichert"; if(n===1) return "1 Schein wurde gespeichert"; return `${n} Scheine wurden gespeichert`; }
+function drawnCountText(n){ const tot=MAX_DRAWN_FOR_SUMMARY; if(n===0) return "Keine Zahlen vorhanden"; if(n===1) return `1 von ${tot} Zahlen wurde gezogen`; return `${n} von ${tot} Zahlen wurden gezogen`; }
+
+const tabs=$$(".tabs button"), pages=$$(".page");
+function goTo(id){ tabs.forEach(b=>b.classList.toggle("active",b.dataset.target===id)); pages.forEach(p=>p.classList.toggle("active",p.id===id)); window.scrollTo({top:0,behavior:"smooth"}); }
+tabs.forEach(btn=>btn.addEventListener("click",()=>{ goTo(btn.dataset.target); if(btn.dataset.target==="page-saved") renderTickets(); if(btn.dataset.target==="page-overview") renderOverview(); }));
+
+function updateTicketCounts(){ const n=loadTickets().length, text=ticketCountText(n); const s=$("#ticket-count-bar-small"), b=$("#ticket-count-bar-big"); if(s) s.textContent=text; if(b) b.textContent=text; }
+
+let board=JSON.parse(localStorage.getItem("bingo-board")||"null")||emptyBoard();
+let editingTicketId=null, boardTouched=false;
+const boardEl=$("#board");
+
+/* ===== App-Modal (zentriert) ===== */
+const appModal=$("#appModal"), modalTitle=$("#appModalTitle"), modalMsg=$("#appModalMsg");
+const modalOk=$("#appModalOk"), modalCancel=$("#appModalCancel");
+let modalResolve=null, lastFocus=null;
+
+function openModal({title="Hinweis", message="", okText="OK", cancelText="Abbrechen", showCancel=false}={}){
+  return new Promise(res=>{
+    modalResolve=res;
+    lastFocus=document.activeElement;
+
+    modalTitle.textContent=title;
+    modalMsg.innerHTML=message.replace(/\n/g,"<br>");
+    modalOk.textContent=okText;
+    modalCancel.textContent=cancelText;
+    modalCancel.style.display=showCancel?"inline-flex":"none";
+
+    document.body.classList.add('no-scroll');
+    appModal.classList.remove('d-none');
+
+    const onKey=(e)=>{ if(e.key==="Escape" && showCancel){ cleanup(false); } if(e.key==="Enter"){ cleanup(true); } };
+    function cleanup(val){
+      document.removeEventListener("keydown", onKey);
+      appModal.classList.add('d-none');
+      document.body.classList.remove('no-scroll');
+      modalOk.onclick=null; modalCancel.onclick=null;
+      try{ lastFocus?.focus(); }catch{}
+      res(val);
+    }
+    modalOk.onclick=()=>cleanup(true);
+    modalCancel.onclick=()=>cleanup(false);
+    document.addEventListener("keydown", onKey);
+    modalOk.focus();
+  });
+}
+const modalAlert=(message, title="Hinweis", okText="OK")=>openModal({title,message,okText,showCancel:false});
+const modalConfirm=(message, title="Bestätigen", okText="Ja", cancelText="Abbrechen")=>openModal({title,message,okText,cancelText,showCancel:true});
+
+/* ===== Board ===== */
+function renderBoard(){
+  boardEl.innerHTML="";
+  for(let r=0;r<5;r++)for(let c=0;c<5;c++){
+    const wrap=document.createElement("div"); wrap.className="cell";
+    const inp=document.createElement("input"); inp.inputMode="numeric"; inp.placeholder=`${COLS[c].min}-${COLS[c].max}`; inp.value=board[r][c];
+    inp.addEventListener("input",e=>{ e.target.value=e.target.value.replace(/[^0-9]/g,""); board[r][c]=e.target.value; localStorage.setItem("bingo-board",JSON.stringify(board)); if(!boardTouched&&e.target.value.trim()!=="") boardTouched=true; validateBoard(); });
+    wrap.appendChild(inp); boardEl.appendChild(wrap);
+  }
+  boardTouched = board.flat().some(v=>String(v).trim()!==""); validateBoard();
+}
+renderBoard();
+
+function validateBoard(){
+  const inputs=boardEl.querySelectorAll("input"); inputs.forEach(i=>i.classList.remove("invalid")); if(!boardTouched) return;
+  const values=[], countMap={};
+  inputs.forEach((inp,i)=>{ const val=inp.value.trim(), col=i%5, n=Number(val), inRange=Number.isInteger(n)&&n>=COLS[col].min&&n<=COLS[col].max; values.push({val,n,inRange,inp}); if(val!==""&&inRange) countMap[val]=(countMap[val]||0)+1; });
+  values.forEach(v=>{ const isEmpty=v.val==="", isDup=v.val!==""&&v.inRange&&countMap[v.val]>1, invalid=isEmpty||!v.inRange||isDup; if(invalid) v.inp.classList.add("invalid"); });
+}
+function isBoardCompletelyValid(){
+  const inputs=[...boardEl.querySelectorAll("input")]; if(inputs.length!==25) return false; const seen=new Set();
+  for(let i=0;i<inputs.length;i++){ const val=inputs[i].value.trim(); if(val==="") return false; const n=Number(val), col=i%5; if(!Number.isInteger(n)||n<COLS[col].min||n>COLS[col].max) return false; if(seen.has(val)) return false; seen.add(val); }
+  return true;
+}
+
+function resetCreateSection(){ board=emptyBoard(); localStorage.setItem("bingo-board",JSON.stringify(board)); renderBoard(); ["name","serien","los","datum"].forEach(id=>{const el=$("#"+id); if(el) el.value="";}); setEditMode(false); }
+$("#resetBoard").addEventListener("click", resetCreateSection);
+$("#fillRandom").addEventListener("click",()=>{ board=genRandomBoard(); localStorage.setItem("bingo-board",JSON.stringify(board)); renderBoard(); boardTouched=true; validateBoard(); });
+
+function setEditMode(on,ticket=null){
+  editingTicketId=on&&ticket?ticket.id:null; const info=$("#editInfo");
+  if(on&&ticket){ board=JSON.parse(JSON.stringify(ticket.board)); localStorage.setItem("bingo-board",JSON.stringify(board)); renderBoard(); $("#name").value=ticket.meta.name||""; $("#datum").value=ticket.meta.datum||""; $("#serien").value=ticket.meta.seriennummer||""; $("#los").value=ticket.meta.losnummer||""; info.style.display="block"; }
+  else info.style.display="none";
+}
+$("#cancelEdit").addEventListener("click", resetCreateSection);
+
+$("#saveTicket").addEventListener("click", async ()=>{
+  if(!isBoardCompletelyValid()){ boardTouched=true; validateBoard(); await modalAlert("Bitte fülle alle 25 Felder korrekt aus:<br>• Keine Leerfelder<br>• Keine doppelten Zahlen<br>• Spaltenbereiche: B 1–15, I 16–30, N 31–45, G 46–60, O 61–75."); return; }
+  const meta={name:$("#name").value,datum:$("#datum").value,seriennummer:$("#serien").value,losnummer:$("#los").value};
+  if(editingTicketId){
+    const list=loadTickets(); const idx=list.findIndex(t=>t.id===editingTicketId);
+    if(idx>-1){ list[idx]={...list[idx],meta,board:JSON.parse(JSON.stringify(board))}; saveTickets(list); await modalAlert("Schein aktualisiert."); }
+    resetCreateSection(); renderTickets(); renderOverview(); updateTicketCounts(); goTo("page-saved");
+  }else{
+    const t={id:crypto.randomUUID(),meta,board:JSON.parse(JSON.stringify(board))};
+    const list=loadTickets(); list.push(t); saveTickets(list);
+    await modalAlert("Schein gespeichert.");
+    resetCreateSection(); updateTicketCounts(); renderTickets(); renderOverview();
+  }
+});
+
+function evaluateTicket(b,drawnSet){
+  const hit=(r,c)=>b[r][c]&&drawnSet.has(Number(b[r][c])); const lines=[];
+  for(let r=0;r<5;r++) if([0,1,2,3,4].every(c=>hit(r,c))) lines.push({type:"row",idx:r});
+  for(let c=0;c<5;c++) if([0,1,2,3,4].every(r=>hit(r,c))) lines.push({type:"col",idx:c});
+  if([0,1,2,3,4].every(i=>hit(i,i))) lines.push({type:"diag",idx:0});
+  if([0,1,2,3,4].every(i=>hit(i,4-i))) lines.push({type:"diag",idx:1});
+  return lines;
+}
+function drawBingoLinesSVG(container,lines){
+  if(!lines.length) return;
+  const svg=document.createElementNS("http://www.w3.org/2000/svg","svg"); svg.classList.add("win-lines");
+  const w=container.clientWidth,h=container.clientHeight,cw=w/5,ch=h/5; svg.setAttribute("viewBox",`0 0 ${w} ${h}`);
+  const mk=(x1,y1,x2,y2)=>{const l=document.createElementNS("http://www.w3.org/2000/svg","line"); l.setAttribute("x1",x1); l.setAttribute("y1",y1); l.setAttribute("x2",x2); l.setAttribute("y2",y2); l.setAttribute("stroke","#ef4444"); l.setAttribute("stroke-width","6"); l.setAttribute("stroke-linecap","round"); svg.appendChild(l);};
+  lines.forEach(L=>{ if(L.type==="row"){const y=L.idx*ch+ch/2; mk(cw/2,y,w-cw/2,y);} if(L.type==="col"){const x=L.idx*cw+cw/2; mk(x,ch/2,x,h-ch/2);} if(L.type==="diag"&&L.idx===0) mk(cw/2,ch/2,w-cw/2,h-ch/2); if(L.type==="diag"&&L.idx===1) mk(w-cw/2,ch/2,cw/2,h-ch/2); });
+  container.appendChild(svg);
+}
+
+function renderTickets(){
+  const box=$("#tickets"), tickets=loadTickets(), drawn=new Set(loadDrawn()); box.innerHTML=""; updateTicketCounts();
+  if(!tickets.length){ box.innerHTML=`<div class="empty-center"><button class="btn primary" id="goCreateTicket">🧩 Jetzt Schein erstellen</button></div>`; return; }
+
+  tickets.forEach(t=>{
+    const lines=evaluateTicket(t.board,drawn).length;
+    const card=document.createElement("div"); card.className="card";
+    const inner=document.createElement("div"); inner.className="inner"; inner.style.textAlign="center";
+    const dateStr=t.meta.datum?formatDateDE(t.meta.datum):"";
+    inner.innerHTML=`
+      <div style="display:flex;justify-content:center"><strong>${t.meta.name||"Unbenannter Schein"}</strong></div>
+      <div class="subtitle date-line">${dateStr||"&#160;"}</div>
+      <div class="mini-head" style="margin-top:8px"><span>B</span><span>I</span><span>N</span><span>G</span><span>O</span></div>
+      <div class="board-mini" style="margin-top:6px"></div>
+      <div class="subtitle" style="margin-top:8px">Seriennr.: ${t.meta.seriennummer||"–"} · Losnr.: ${t.meta.losnummer||"–"}</div>
+      <div class="badge-row" data-badge-row><span class="badge" style="visibility:hidden"> </span></div>
+      <div class="ticket-actions"><button class="btn" data-edit="${t.id}">✏️ Bearbeiten</button><button class="btn" data-del="${t.id}">🗑️ Löschen</button></div>
+    `;
+    const mini=inner.querySelector(".board-mini");
+    t.board.forEach(row=>row.forEach(val=>{ const d=document.createElement("div"); d.textContent=val||""; if(val&&drawn.has(Number(val))) d.classList.add("hit"); mini.appendChild(d); }));
+    const lineObjs=evaluateTicket(t.board,drawn); requestAnimationFrame(()=>drawBingoLinesSVG(mini,lineObjs));
+    const badge=inner.querySelector("[data-badge-row] .badge"); if(lines>0){ badge.textContent=`${lines}× Bingo`; badge.style.visibility="visible"; }
+    inner.querySelector(`[data-del="${t.id}"]`).addEventListener("click", async ()=>{
+      if(await modalConfirm("Diesen Schein wirklich löschen?","Bestätigen","Löschen","Abbrechen")){
+        const rest=loadTickets().filter(x=>x.id!==t.id); saveTickets(rest); renderTickets(); renderOverview();
+      }
+    });
+    inner.querySelector(`[data-edit="${t.id}"]`).addEventListener("click",()=>{ setEditMode(true,t); goTo("page-schein"); });
+    card.appendChild(inner); box.appendChild(card);
+  });
+}
+$("#clearTickets").addEventListener("click", async ()=>{
+  if(!loadTickets().length){ await modalAlert("Keine Scheine vorhanden."); return; }
+  if(await modalConfirm("Wirklich ALLE Scheine löschen?","Bestätigen","Ja, löschen")){
+    saveTickets([]); renderTickets(); renderOverview(); updateTicketCounts();
+  }
+});
+
+const drawInput=$("#drawInput");
+function parseNumbers(text){ return text.split(/[^0-9]+/).map(s=>s.trim()).filter(Boolean).map(Number).filter(n=>Number.isInteger(n)&&n>=1&&n<=75); }
+async function setDrawn(arr){
+  const prevCount=loadDrawn().length; let prevTotal=localStorage.getItem(K_LAST_TOTAL);
+  if(prevTotal===null){ const ds=new Set(loadDrawn()); let t=0; loadTickets().forEach(k=>t+=evaluateTicket(k.board,ds).length); prevTotal=t; }
+  prevTotal=Number(prevTotal)||0;
+  let list=uniquePreserveOrder(arr);
+  if(list.length>MAX_DRAWN_FOR_SUMMARY){
+    list=list.slice(0,MAX_DRAWN_FOR_SUMMARY);
+    await modalAlert(`Es können maximal ${MAX_DRAWN_FOR_SUMMARY} Zahlen gezogen werden.`);
+  }
+  const newTotal=(()=>{const ds=new Set(list); let t=0; loadTickets().forEach(k=>t+=evaluateTicket(k.board,ds).length); return t; })();
+  saveDrawn(list);
+  if(list.length===MAX_DRAWN_FOR_SUMMARY && prevCount!==MAX_DRAWN_FOR_SUMMARY){ goTo("page-overview"); document.getElementById("statusBox")?.scrollIntoView({behavior:"smooth",block:"start"}); }
+  else if(newTotal>prevTotal && document.querySelector(".page.active")?.id==="page-draw"){ goTo("page-overview"); }
+  renderDrawnSummaryBar();
+}
+function renderDrawnSummaryBar(){ const n=loadDrawn().length; const bar=document.getElementById("draw-count-bar"); if(bar) bar.textContent=drawnCountText(n); renderTickets(); renderOverview(); renderPicker(); }
+document.getElementById("addDrawn").addEventListener("click", async ()=>{
+  const inNums=parseNumbers(drawInput.value);
+  if(!inNums.length){ await modalAlert("Bitte gültige Zahlen (1–75) eingeben."); return; }
+  await setDrawn([...loadDrawn(),...inNums]); drawInput.value="";
+});
+function renderPicker(){
+  const grid=$("#pickerGrid"); grid.innerHTML=""; const selected=new Set(loadDrawn());
+  for(let row=0;row<15;row++)for(let col=0;col<5;col++){
+    const num=(col*15)+(row+1); const cell=document.createElement("div"); const isSel=selected.has(num);
+    cell.className="num"+(isSel?" selected":""); cell.textContent=num; cell.setAttribute("role","button"); cell.setAttribute("aria-pressed",isSel?"true":"false");
+    cell.addEventListener("click", async ()=>{
+      const s=new Set(loadDrawn());
+      if(s.has(num)){ await modalAlert("Diese Zahl ist bereits erfasst.<br><small>Hinweis: Zum Entfernen gehe zur Übersichtsseite und klicke dort die Zahl an oder wähle „Alle Zahlen löschen“.</small>"); return; }
+      if(s.size>=MAX_DRAWN_FOR_SUMMARY){ await modalAlert(`Es können maximal ${MAX_DRAWN_FOR_SUMMARY} Zahlen gezogen werden.`); return; }
+      s.add(num); await setDrawn([...s]);
+    });
+    grid.appendChild(cell);
+  }
+}
+
+function renderResultsIntoOverview(){
+  const drawn=loadDrawn(), ticketsCount=loadTickets().length;
+  const ticketCounter=document.getElementById("overview-count-tickets"); if(ticketCounter) ticketCounter.textContent=ticketCountText(ticketsCount);
+  const statusCounter=document.getElementById("overview-count-status"); if(statusCounter) statusCounter.textContent=drawnCountText(drawn.length);
+  const statusBox=document.getElementById("statusBox"); if(drawn.length===0){ if(statusBox) statusBox.style.display="none"; } else { if(statusBox) statusBox.style.display=""; }
+  const dset=new Set(drawn); let singles=0,doubles=0,triples=0,totalLines=0;
+  loadTickets().forEach(t=>{ const cnt=evaluateTicket(t.board,dset).length; totalLines+=cnt; if(cnt>=3)triples++; else if(cnt===2)doubles++; else if(cnt===1)singles++; });
+  const title=$("#statusTitle"), sub=$("#statusSub");
+  if(drawn.length===0){ title.textContent=""; sub.textContent=""; statusBox?.classList.remove("win","flash"); }
+  else if(totalLines>0){ title.textContent="🎉 Du hast gewonnen!"; const parts=[]; if(singles>0)parts.push(`${singles}× Bingo`); if(doubles>0)parts.push(`${doubles}× Doppelbingo`); if(triples>0)parts.push(`${triples}× Dreifachbingo`); sub.textContent=parts.join(" – ")||`${totalLines}× Bingo`; statusBox.classList.add("win"); }
+  else if(drawn.length===MAX_DRAWN_FOR_SUMMARY){ title.textContent="Leider kein Glück gehabt, vielleicht klappts beim nächsten mal!"; sub.textContent=""; statusBox.classList.remove("win"); }
+  else { title.textContent="Noch kein Bingo"; sub.textContent=""; statusBox.classList.remove("win"); }
+  const prevRaw=localStorage.getItem(K_LAST_TOTAL), prev=prevRaw===null?null:Number(prevRaw);
+  if(prev===null){ localStorage.setItem(K_LAST_TOTAL,String(totalLines)); }
+  else{ if(totalLines>prev){ statusBox?.classList.add("flash"); statusBox?.scrollIntoView({behavior:"smooth",block:"start"}); setTimeout(()=>statusBox?.classList.remove("flash"),1400); }
+    localStorage.setItem(K_LAST_TOTAL,String(totalLines)); }
+}
+
+function renderOverviewWinners(){
+  const listEl=$("#winnersList"), subEl=$("#winnersSubtitle"); if(!listEl) return; listEl.innerHTML="";
+  const drawnSet=new Set(loadDrawn());
+  let winners=loadTickets().map(t=>{const lines=evaluateTicket(t.board,drawnSet);return{ticket:t,lines,count:lines.length};}).filter(x=>x.count>0).sort((a,b)=>b.count-a.count);
+  if(!winners.length){ subEl.textContent="Kein Schein mit Gewinn vorhanden"; return; }
+  subEl.textContent=`${winners.length} Schein(e) mit Treffern:`;
+  winners.forEach(({ticket,lines,count})=>{
+    const card=document.createElement("div"); card.className="card";
+    const inner=document.createElement("div"); inner.className="inner"; inner.style.textAlign="center";
+    inner.innerHTML=`<div style="display:flex;justify-content:center"><strong>${ticket.meta.name||"Unbenannter Schein"}</strong></div>
+      <div class="subtitle date-line">${ticket.meta.datum?formatDateDE(ticket.meta.datum):"&#160;"}</div>
+      <div class="mini-head" style="margin-top:8px"><span>B</span><span>I</span><span>N</span><span>G</span><span>O</span></div>
+      <div class="board-mini" style="margin-top:6px"></div>
+      <div class="subtitle" style="margin-top:8px">Seriennr.: ${ticket.meta.seriennummer||"–"} · Losnr.: ${ticket.meta.losnummer||"–"}</div>
+      <div class="badge-row"><span class="badge">${count}× Bingo</span></div>`;
+    const mini=inner.querySelector(".board-mini");
+    ticket.board.forEach(row=>row.forEach(val=>{ const d=document.createElement("div"); d.textContent=val||""; if(val&&drawnSet.has(Number(val))) d.classList.add("hit"); mini.appendChild(d); }));
+    requestAnimationFrame(()=>drawBingoLinesSVG(mini,lines));
+    card.appendChild(inner); listEl.appendChild(card);
+  });
+}
+
+function renderOverview(){
+  renderResultsIntoOverview();
+  const table=$("#overviewTable"); const arr=loadDrawn().slice().sort((a,b)=>a-b); const cols=[[],[],[],[],[]]; arr.forEach(n=>{const idx=getColIdx(n); if(idx>=0) cols[idx].push(n);});
+  table.innerHTML="";
+  if(arr.length===0){ table.innerHTML=`<div class="empty-center"><button class="btn primary" id="goToNumbersBtn">➕ Zahlen hinzufügen</button></div>`; }
+  else{
+    const maxRows=Math.max(...cols.map(c=>c.length),1);
+    for(let r=0;r<maxRows;r++)for(let c=0;c<5;c++){
+      const value=cols[c][r]; const d=document.createElement("div"); d.className="cell"+(value?" clickable":""); d.style.padding="10px"; d.style.textAlign="center"; d.textContent=value??"";
+      if(value){ d.title="Klicken, um diese Zahl zu löschen"; d.addEventListener("click", async ()=>{ if(await modalConfirm(`Zahl ${value} wirklich löschen?`)){ const list=loadDrawn().filter(n=>n!==value); saveDrawn(list); renderDrawnSummaryBar(); } }); }
+      table.appendChild(d);
+    }
+  }
+  renderOverviewWinners();
+}
+
+document.addEventListener("click", async (e)=>{
+  if(e.target && e.target.id==="clearDrawnOverview"){
+    if(await modalConfirm("Alle gespeicherten gezogenen Zahlen wirklich löschen?","Bestätigen","Alle löschen")){ saveDrawn([]); renderDrawnSummaryBar(); }
+  }
+  if(e.target && e.target.id==="goToNumbersBtn"){ goTo("page-draw"); }
+  if(e.target && e.target.id==="goCreateTicket"){ goTo("page-schein"); }
+});
+
+/* ===== Foto & OCR ===== */
+const ocrInput=$("#ocrFile"), photoStage=$("#photoStage"), photoImg=$("#photoImage"), cropOverlay=$("#cropOverlay");
+const alignBtn=$("#alignBtn"), removePhotoBtn=$("#removePhotoBtn"), angleBadge=$("#angleBadge"), cropRect=$("#cropRect");
+let currentURL=null, hasImage=false, alignMode=false, cropAngle=0;
+
+function show(el){ el?.classList.remove('d-none'); }
+function hide(el){ el?.classList.add('d-none'); }
+
+function updateButtons(){
+  if(!hasImage){ hide(alignBtn); hide(removePhotoBtn); hide(photoStage); hide(cropOverlay); alignMode=false; alignBtn.textContent='📏 Zahlentabelle ausrichten'; return; }
+  show(photoStage); show(removePhotoBtn); show(alignBtn);
+  alignBtn.textContent = alignMode ? '✅ Fertig ausgerichtet' : '📏 Zahlentabelle ausrichten';
+  cropOverlay.classList.toggle('d-none', !alignMode);
+}
+function resetPhoto(){
+  if(currentURL){ URL.revokeObjectURL(currentURL); currentURL=null; }
+  photoImg.src=''; hasImage=false; cropAngle=0; angleBadge.textContent='0°';
+  cropRect.style.left='10%'; cropRect.style.top='10%'; cropRect.style.width='80%'; cropRect.style.height='80%';
+  $("#ocrStatus").textContent='';
+  hideOcrOverlay();
+  updateButtons();
+}
+
+ocrInput?.addEventListener('change',(e)=>{
+  const f=e.target.files?.[0]; if(!f){ resetPhoto(); return; }
+  if(currentURL) URL.revokeObjectURL(currentURL);
+  currentURL=URL.createObjectURL(f);
+  photoImg.onload=()=>{ hasImage=true; updateButtons(); };
+  photoImg.src=currentURL;
+});
+removePhotoBtn?.addEventListener('click',()=>{
+  resetPhoto();
+  ocrInput.value="";
+});
+
+/* Geometrie & Grid */
+const CROP_BORDER=3, GRID=2, INSET=2, FUDGE_R=8, FUDGE_B=8;
+function stageRect(){ return photoStage.getBoundingClientRect(); }
+function stylesToPx(){
+  const st=stageRect();
+  const L=Math.round(st.width*(parseFloat(cropRect.style.left)/100));
+  const T=Math.round(st.height*(parseFloat(cropRect.style.top)/100));
+  const W=Math.max(1, Math.round(st.width*(parseFloat(cropRect.style.width)/100)));
+  const H=Math.max(1, Math.round(st.height*(parseFloat(cropRect.style.height)/100)));
+  return {L,T,W,H,st};
+}
+function writePx(L,T,W,H,st){ cropRect.style.left=(L/st.width)*100+'%'; cropRect.style.top=(T/st.height)*100+'%'; cropRect.style.width=(W/st.width)*100+'%'; cropRect.style.height=(H/st.height)*100+'%'; }
+function updateGrid(){
+  const {W,H}=stylesToPx();
+  const x0=CROP_BORDER+INSET, y0=CROP_BORDER+INSET;
+  const innerW=Math.max(1,W-(CROP_BORDER+INSET)-(CROP_BORDER+INSET+FUDGE_R));
+  const innerH=Math.max(1,H-(CROP_BORDER+INSET)-(CROP_BORDER+INSET+FUDGE_B));
+  for(let i=1;i<=4;i++){
+    const vx=x0+Math.floor(innerW*(i/5)), v=cropRect.querySelector(`[data-g="v${i}"]`);
+    v.style.cssText=`left:${vx-(GRID>>1)}px; top:${y0}px; width:${GRID}px; height:${innerH}px`;
+    const hy=y0+Math.floor(innerH*(i/5)), h=cropRect.querySelector(`[data-g="h${i}"]`);
+    h.style.cssText=`left:${x0}px; top:${hy-(GRID>>1)}px; width:${innerW}px; height:${GRID}px`;
+  }
+}
+function getCropRectPixels(){
+  const {L,T,W,H}=stylesToPx();
+  const x=L+CROP_BORDER+INSET, y=T+CROP_BORDER+INSET;
+  const w=Math.max(1,W-(CROP_BORDER+INSET)-(CROP_BORDER+INSET+FUDGE_R));
+  const h=Math.max(1,H-(CROP_BORDER+INSET)-(CROP_BORDER+INSET+FUDGE_B));
+  return {x,y,w,h};
+}
+
+/* Drag & Rotate */
+let dragMode=null;
+cropRect.addEventListener('pointerdown',(e)=>{
+  if(!alignMode) return;
+  const h=e.target.closest('.handle'); dragMode = h ? (h.dataset.h==='rot'?'rotate':'handle:'+h.dataset.h) : 'move';
+  e.preventDefault(); e.target.setPointerCapture?.(e.pointerId);
+});
+cropRect.addEventListener('pointermove',(e)=>{
+  if(!alignMode||!dragMode) return;
+  const {L, T, W, H, st}=stylesToPx();
+  const x=Math.max(0,Math.min(e.clientX - st.left, st.width));
+  const y=Math.max(0,Math.min(e.clientY - st.top , st.height));
+  if(dragMode==='rotate'){
+    const ang1=Math.atan2(y-(T+H/2), x-(L+W/2))*180/Math.PI;
+    const delta=ang1+90; cropAngle=Math.max(-45,Math.min(45,delta)); cropRect.style.transform=`rotate(${cropAngle}deg)`; angleBadge.textContent=`${Math.round(cropAngle)}°`; return;
+  }
+  if(dragMode==='move'){
+    const newL=Math.max(0,Math.min(Math.round(x-W/2), st.width-W));
+    const newT=Math.max(0,Math.min(Math.round(y-H/2), st.height-H));
+    writePx(newL,newT,W,H,st); updateGrid(); return;
+  }
+  if(dragMode.startsWith('handle:')){
+    const min=40; let NL=L, NT=T, NW=W, NH=H;
+    const w=dragMode.split(':')[1];
+    if(w==='tl'){ const nl=Math.max(0,Math.min(x, L+W-min)); const nt=Math.max(0,Math.min(y, T+H-min)); NW=(L+W)-nl; NH=(T+H)-nt; NL=Math.round(nl); NT=Math.round(nt); }
+    if(w==='tr'){ const nr=Math.max(L+min,Math.min(x, st.width)); NW=Math.round(nr-L); const nt=Math.max(0,Math.min(y, T+H-min)); NH=(T+H)-nt; NT=Math.round(nt); }
+    if(w==='bl'){ const nb=Math.max(T+min,Math.min(y, st.height)); NH=Math.round(nb-T); const nl=Math.max(0,Math.min(x, L+W-min)); NW=(L+W)-nl; NL=Math.round(nl); }
+    if(w==='br'){ const nr=Math.max(L+min,Math.min(x, st.width)); const nb=Math.max(T+min,Math.min(y, st.height)); NW=Math.round(nr-L); NH=Math.round(nb-T); }
+    NW=Math.max(1,NW); NH=Math.max(1,NH);
+    writePx(NL,NT,NW,NH,st); updateGrid(); return;
+  }
+});
+cropRect.addEventListener('pointerup',()=>{ dragMode=null; });
+cropRect.addEventListener('pointercancel',()=>{ dragMode=null; });
+
+/* Bild transformieren */
+function getBaseContainRect(stageEl, imgEl){
+  const st = stageEl.getBoundingClientRect();
+  const imgAspect = imgEl.naturalWidth / imgEl.naturalHeight;
+  const stageAspect = st.width / st.height;
+  let visW, visH, offX, offY;
+  if (imgAspect > stageAspect){
+    visW = st.width; visH = Math.round(st.width / imgAspect);
+    offX = 0; offY = Math.round((st.height - visH) / 2);
+  } else {
+    visH = st.height; visW = Math.round(st.height * imgAspect);
+    offY = 0; offX = Math.round((st.width - visW) / 2);
+  }
+  return { left: offX, top: offY, width: visW, height: visH };
+}
+function preprocessRotatedToCanvas(imgEl, rectPx, angleDeg){
+  const angle = (angleDeg || 0) * Math.PI/180;
+  const isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent);
+  const outW = isIOS ? 1300 : 1500;
+  const outH = Math.max(1, Math.round(rectPx.h * (outW / rectPx.w)));
+  const canvas = document.createElement('canvas'); canvas.width=outW; canvas.height=outH;
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+
+  const base = getBaseContainRect(photoStage, imgEl);
+  const effLeft = base.left, effTop = base.top, effW = base.width, effH = base.height;
+
+  const cx = rectPx.x + rectPx.w/2;
+  const cy = rectPx.y + rectPx.h/2;
+
+  ctx.translate(outW/2, outH/2);
+  ctx.rotate(-angle);
+  ctx.scale(outW / rectPx.w, outW / rectPx.w);
+  ctx.translate(-cx, -cy);
+  ctx.imageSmoothingEnabled = true;
+  ctx.drawImage(imgEl, effLeft, effTop, effW, effH);
+
+  const id = ctx.getImageData(0,0,outW,outH);
+  const d = id.data; let sum=0;
+  for(let i=0;i<d.length;i+=4){ sum += 0.2126*d[i]+0.7152*d[i+1]+0.0722*d[i+2]; }
+  const avg = sum/(d.length/4), gain = 1.25;
+  for(let i=0;i<d.length;i+=4){
+    const g = 0.2126*d[i]+0.7152*d[i+1]+0.0722*d[i+2];
+    const v = (g - avg) * gain + avg;
+    d[i]=d[i+1]=d[i+2]=v; d[i+3]=255;
+  }
+  ctx.putImageData(id,0,0);
+  return canvas;
+}
+
+/* OCR-Worker + Prewarm */
+let __ocrWorker = null;
+async function getOCRWorker(){
+  if (__ocrWorker) return __ocrWorker;
+  const w = await Tesseract.createWorker('deu+eng');
+  await w.setParameters({ tessedit_char_whitelist:'0123456789', tessedit_do_invert:'1', preserve_interword_spaces:'1' });
+  __ocrWorker = w;
+  return w;
+}
+(async function prewarmOCR(){ try{ await getOCRWorker(); }catch(e){} })();
+
+/* ===== OCR Overlay / Progress ===== */
+const ocrOverlay = document.getElementById("ocrOverlay");
+const ocrOLBar   = document.getElementById("ocrOLBar");
+const ocrOLLbl   = document.getElementById("ocrOLLabel");
+const ocrOLText  = document.getElementById("ocrOverlayStatus");
+
+function showOcrOverlay(msg){
+  if(!ocrOverlay) return;
+  document.body.classList.add('no-scroll');
+  ocrOverlay.classList.remove('d-none');
+  updateOcrProgress(0,25,msg||'Bitte warten…');
+}
+function updateOcrProgress(done, total, msg){
+  const pct = Math.max(0, Math.min(100, Math.round((done/total)*100)));
+  if(ocrOLBar){ ocrOLBar.style.width = pct + "%"; ocrOverlay?.querySelector('.progress')?.setAttribute('aria-valuenow', String(pct)); }
+  if(ocrOLLbl){ ocrOLLbl.textContent = pct + "%"; }
+  if(msg && ocrOLText){ ocrOLText.textContent = msg; }
+}
+function hideOcrOverlay(){
+  if(!ocrOverlay) return;
+  ocrOverlay.classList.add('d-none');
+  document.body.classList.remove('no-scroll');
+}
+
+/* ===== Hilfen für OCR (Integer-safe) ===== */
+function makeRGBA(w,h,fill=255){
+  const len=w*h*4; const a=new Uint8ClampedArray(len);
+  for(let i=0;i<len;i+=4){ a[i]=a[i+1]=a[i+2]=fill; a[i+3]=255; }
+  return a;
+}
+function paintRGBA(ctx,x,y,w,h,rgba){
+  if(w<=0||h<=0) return;
+  const id = ctx.createImageData(w,h);
+  if (rgba.length !== w*h*4) return;
+  id.data.set(rgba);
+  ctx.putImageData(id,x,y);
+}
+
+/* ===== OCR-Pipeline ===== */
+async function ocrBingoGridFromCanvas(gridCanvas){
+  const W = Math.max(5, gridCanvas.width);
+  const H = Math.max(5, gridCanvas.height);
+  const cw = Math.floor(W/5), ch = Math.floor(H/5);
+  const baseCtx=gridCanvas.getContext('2d', { willReadFrequently:true });
+  const worker = await getOCRWorker();
+
+  function toGray(sx,sy,sw,sh){
+    sx|=0; sy|=0; sw=Math.max(1,sw|0); sh=Math.max(1,sh|0);
+    const id=baseCtx.getImageData(sx,sy,sw,sh);
+    const d=id.data, g=new Uint8ClampedArray(sw*sh);
+    for(let i=0,j=0;i<d.length;i+=4,j++){ g[j]=(0.2126*d[i]+0.7152*d[i+1]+0.0722*d[i+2])|0; d[i]=d[i+1]=d[i+2]=g[j]; d[i+3]=255; }
+    return { id, gray:g, w:sw, h:sh };
+  }
+  function otsu(gray,w,h){
+    const hist=new Uint32Array(256); for(let i=0;i<gray.length;i++) hist[gray[i]]++;
+    const total=w*h; let sum=0; for(let t=0;t<256;t++) sum+=t*hist[t];
+    let sumB=0, wB=0, varMax=-1, thr=127;
+    for(let t=0;t<256;t++){
+      wB+=hist[t]; if(!wB) continue;
+      const wF=total-wB; if(!wF) break;
+      sumB+=t*hist[t]; const mB=sumB/wB, mF=(sum-sumB)/wF;
+      const between=wB*wF*(mB-mF)*(mB-mF);
+      if(between>varMax){varMax=between; thr=t;}
+    }
+    return thr|0;
+  }
+  function sauvola(gray,w,h,k=0.34,R=128,win=25){
+    const out=new Uint8ClampedArray(w*h*4), half=Math.max(1,(win|0)>>1);
+    for(let y=0;y<h;y++){
+      for(let x=0;x<w;x++){
+        let sum=0,sum2=0,cnt=0;
+        for(let j=-half;j<=half;j++){ const yy=y+j; if(yy<0||yy>=h) continue;
+          for(let i=-half;i<=half;i++){ const xx=x+i; if(xx<0||xx>=w) continue;
+            const v=gray[yy*w+xx]; sum+=v; sum2+=v*v; cnt++; } }
+        const m=sum/cnt, s=Math.sqrt(Math.max(0,sum2/cnt - m*m));
+        const thr = m * (1 + k * ((s/R) - 1));
+        const pix = gray[y*w+x] > thr ? 255 : 0;
+        const idx=(y*w+x)*4; out[idx]=out[idx+1]=out[idx+2]=pix; out[idx+3]=255;
+      }
+    }
+    return out;
+  }
+  function morphCloseOpen(rgba,w,h){
+    const b=new Uint8ClampedArray(rgba), idx=(x,y)=>((y*w+x)<<2);
+    const dila=new Uint8ClampedArray(b);
+    for(let y=1;y<h-1;y++)for(let x=1;x<w-1;x++){
+      let any=false; for(let j=-1;j<=1;j++)for(let i=-1;i<=1;i++){ if(b[idx(x+i,y+j)]===255){any=true;} }
+      const k=idx(x,y),v=any?255:0; dila[k]=dila[k+1]=dila[k+2]=v; dila[k+3]=255;
+    }
+    const eros=new Uint8ClampedArray(dila);
+    for(let y=1;y<h-1;y++)for(let x=1;x<w-1;x++){
+      let all=true; for(let j=-1;j<=1;j++)for(let i=-1;i<=1;i++){ if(dila[idx(x+i,y+j)]!==255){all=false;} }
+      const k=idx(x,y),v=all?255:0; eros[k]=eros[k+1]=eros[k+2]=v; eros[k+3]=255;
+    }
+    const out=new Uint8ClampedArray(eros);
+    for(let y=1;y<h-1;y++)for(let x=1;x<w-1;x++){
+      let any=false; for(let j=-1;j<=1;j++)for(let i=-1;i<=1;i++){ if(eros[idx(x+i,y+j)]===255){any=true;} }
+      const k=idx(x,y),v=any?255:0; out[k]=out[k+1]=out[k+2]=v; out[k+3]=255;
+    }
+    return out;
+  }
+  function upscale(ctx,sw,sh,scale=2.0){
+    const tw=Math.max(1,Math.round(sw*scale)), th=Math.max(1,Math.round(sh*scale));
+    const tmp=document.createElement('canvas'); tmp.width=tw; tmp.height=th;
+    const tctx=tmp.getContext('2d',{willReadFrequently:true});
+    tctx.imageSmoothingEnabled=true;
+    tctx.drawImage(ctx.canvas, 0,0, sw,sh, 0,0, tw,th);
+    return {canvas:tmp, ctx:tctx, w:tw, h:th};
+  }
+
+  const results=[];
+  for(let r=0;r<5;r++){
+    for(let c=0;c<5;c++){
+      const cellW=cw, cellH=ch;
+      const padX=Math.floor(cellW*0.10), padY=Math.floor(cellH*0.10);
+      const sx=(c*cellW+padX)|0, sy=(r*cellH+padY)|0;
+      const sw=Math.max(1, cellW - 2*padX)|0, sh=Math.max(1, cellH - 2*padY)|0;
+
+      const { gray, w:gw, h:gh } = toGray(sx,sy,sw,sh);
+      const avg = gray.reduce((a,v)=>a+v,0)/gray.length;
+      const thrGlobal = Math.max(64, Math.min(200, avg*0.92))|0;
+
+      const base=document.createElement('canvas'); base.width=gw; base.height=gh;
+      const bctx=base.getContext('2d',{willReadFrequently:true});
+
+      const variants=[];
+      (function(){const out=makeRGBA(gw,gh,255);
+        for(let i=0,j=0;i<gray.length;i++,j+=4){const v=gray[i]>thrGlobal?255:0; out[j]=out[j+1]=out[j+2]=v; }
+        variants.push({type:'global',rgba:out,w:gw,h:gh});
+      })();
+      (function(){const thr=otsu(gray,gw,gh), out=makeRGBA(gw,gh,255);
+        for(let i=0,j=0;i<gray.length;i++,j+=4){const v=gray[i]>thr?255:0; out[j]=out[j+1]=out[j+2]=v;}
+        variants.push({type:'otsu',rgba:out,w:gw,h:gh});
+      })();
+      (function(){const out=makeRGBA(gw,gh,255);
+        for(let i=0,j=0;i<gray.length;i++,j+=4){const v=gray[i]>thrGlobal?0:255; out[j]=out[j+1]=out[j+2]=v;}
+        variants.push({type:'inv',rgba:out,w:gw,h:gh});
+      })();
+      const sau = sauvola(gray,gw,gh,0.34,128,25);
+      variants.push({type:'sauvola',rgba:sau,w:gw,h:gh});
+      variants.push({type:'sauvola+morph',rgba:morphCloseOpen(sau,gw,gh),w:gw,h:gh});
+
+      let best={num:null, conf:-1, raw:''};
+      for(const v of variants){
+        bctx.clearRect(0,0,gw,gh);
+        paintRGBA(bctx,0,0, v.w, v.h, v.rgba);
+        const enlarged=upscale(bctx,gw,gh,2.0);
+        const workerInst = await getOCRWorker();
+        await workerInst.setParameters({ tessedit_pageseg_mode: Tesseract.PSM.SINGLE_WORD });
+        const { data } = await workerInst.recognize(enlarged.canvas);
+        let conf=0, text=data?.text||'';
+        if(Array.isArray(data?.words) && data.words.length){
+          conf = data.words.reduce((a,w)=>a+(w.confidence||0),0)/data.words.length;
+        } else if (typeof data?.confidence==='number'){
+          conf = data.confidence;
+        }
+        const raw=(text||'').replace(/\D+/g,'');
+        const m = raw.match(/\d{1,2}/);
+        const cand = { num: m?parseInt(m[0],10):null, conf: conf||0, raw };
+        if(cand.num!=null && cand.conf>best.conf) best=cand;
+      }
+
+      const colRange = COLS[c];
+      const inCol = n => Number.isInteger(n) && n>=colRange.min && n<=colRange.max;
+      const needFallback = best.num==null || best.conf<65 || !inCol(best.num);
+
+      let leftDigit="", rightDigit="";
+      if (needFallback) {
+        const v = variants[4]; // sauvola+morph
+        bctx.clearRect(0,0,gw,gh);
+        paintRGBA(bctx,0,0,v.w,v.h,v.rgba);
+
+        const enlarged = upscale(bctx, gw, gh, 2.0);
+        const tw = enlarged.w, th = enlarged.h;
+        const halves = [
+          { x:0, y:0, w:Math.floor(tw/2), h:th },
+          { x:Math.floor(tw/2), y:0, w:tw-Math.floor(tw/2), h:th }
+        ];
+        const wInst = await getOCRWorker();
+
+        for (let hi=0; hi<2; hi++){
+          const hpart = halves[hi];
+          const c2 = document.createElement('canvas'); c2.width=hpart.w; c2.height=hpart.h;
+          const ctx2 = c2.getContext('2d', { willReadFrequently:true });
+          ctx2.drawImage(enlarged.canvas, hpart.x, hpart.y, hpart.w, hpart.h, 0,0, hpart.w, hpart.h);
+
+          await wInst.setParameters({
+            tessedit_pageseg_mode: Tesseract.PSM.SINGLE_CHAR,
+            tessedit_char_whitelist: '0123456789'
+          });
+          const { data } = await wInst.recognize(c2);
+          const raw = (data?.text || '').replace(/\D+/g,'');
+          if (raw) { if (hi===0) leftDigit=raw[0]; else rightDigit=raw[0]; }
+        }
+
+        if (leftDigit && rightDigit) {
+          const num = parseInt(leftDigit+rightDigit,10);
+          if (inCol(num)) best = { num, conf:82, raw:leftDigit+rightDigit };
+        }
+
+        if ((!best.num || !inCol(best.num)) && leftDigit && !rightDigit){
+          const candidates=[];
+          for(let d=0; d<=9; d++){
+            const n=parseInt(leftDigit+String(d),10);
+            if(inCol(n)) candidates.push(n);
+          }
+          if (candidates.length===1){
+            best = { num:candidates[0], conf:68, raw:leftDigit };
+          }
+        }
+
+        if ((!best.num || !inCol(best.num)) && !leftDigit && rightDigit){
+          const candidates=[];
+          for (let d=0; d<=9; d++){
+            const n = parseInt(String(d)+rightDigit,10);
+            if (inCol(n)) candidates.push(n);
+          }
+          if (candidates.length===1){
+            best = { num:candidates[0], conf:68, raw:rightDigit };
+          }
+        }
+
+        if ((!best.num || !inCol(best.num)) && colRange.min===61 && leftDigit && /\d/.test(leftDigit)){
+          if ((leftDigit==='6' || leftDigit==='7') && rightDigit){
+            const cand=parseInt(leftDigit+rightDigit,10);
+            if(inCol(cand)) best={num:cand,conf:80,raw:leftDigit+rightDigit};
+          }
+        }
+      }
+
+      if ((!best.num || !inCol(best.num)) && best.raw && /^\d{2}$/.test(best.raw)){
+        const n=parseInt(best.raw,10);
+        if (inCol(n)) best={num:n, conf:60, raw:best.raw};
+      }
+
+      results.push({ row:r, col:c, ...best });
+
+      const step = r*5+c+1;
+      const msg = `Erkenne Zellen… ${step}/25`;
+      const st = document.getElementById('ocrStatus'); if(st) st.textContent = msg;
+      updateOcrProgress(step, 25, msg);
+
+      await new Promise(rq=>setTimeout(rq,0));
+    }
+  }
+
+  const CONF_MAP = {
+    '0':['6','8'],'1':['7','4'],'2':['7'],'3':['8','5'],'4':['1','9'],
+    '5':['6','3'],'6':['5','8','0'],'7':['1','2'],'8':['6','3','9','0'],'9':['8','4']
+  };
+  const fixed = new Array(25).fill(null);
+
+  results.forEach(cell=>{
+    const idx = cell.row*5 + cell.col;
+    const range = COLS[cell.col];
+    const inCol = n => Number.isInteger(n) && n>=range.min && n<=range.max;
+
+    if(inCol(cell.num)){ fixed[idx]=cell.num; return; }
+
+    const raw = cell.raw||'';
+    const pool = new Set([raw]);
+    for(let i=0;i<raw.length;i++){
+      for(const alt of (CONF_MAP[raw[i]]||[])){
+        pool.add(raw.slice(0,i)+alt+raw.slice(i+1));
+      }
+    }
+    if(raw.length===2 && raw[0]==='0') pool.add(raw[1]);
+    if(raw.length===2) pool.add(raw[1]+raw[0]);
+
+    const validInCol=[], validOverall=[];
+    for(const s of pool){
+      const n = parseInt(s,10);
+      if(Number.isInteger(n) && n>=1 && n<=75){
+        if(inCol(n)) validInCol.push(n); else validOverall.push(n);
+      }
+    }
+    fixed[idx] = validInCol[0] ?? validOverall[0] ?? (Number.isInteger(cell.num)?cell.num:null);
+  });
+
+  const st = document.getElementById('ocrStatus'); if(st) st.textContent = 'Fertig.';
+  return fixed;
+}
+
+/* Align-Button + 100%-Finish + Modal */
+const ocrStatusEl = document.getElementById("ocrStatus");
+alignBtn?.addEventListener('click', async ()=>{
+  if (!hasImage) return;
+
+  if (!alignMode) {
+    alignMode = true;
+    updateButtons();
+    updateGrid();
+    return;
+  }
+
+  const safeSetStatus = (t)=>{ if(ocrStatusEl) ocrStatusEl.textContent = t||""; };
+
+  try{
+    safeSetStatus('Bereite Bild vor…');
+    showOcrOverlay('Bereite Bild vor…');
+    updateOcrProgress(0, 25);
+
+    const rect = getCropRectPixels();
+    if (!rect.w || !rect.h) {
+      safeSetStatus(''); hideOcrOverlay();
+      await modalAlert('Bitte den Rahmen über die Zahlentabelle legen.');
+      alignMode = false; updateButtons(); return;
+    }
+
+    const canvas = preprocessRotatedToCanvas(photoImg, rect, cropAngle);
+    if (!canvas || !canvas.width || !canvas.height) {
+      safeSetStatus(''); hideOcrOverlay();
+      await modalAlert('Das Foto konnte nicht vorbereitet werden. Bitte erneut versuchen.');
+      alignMode = false; updateButtons(); return;
+    }
+
+    safeSetStatus('Erkenne Zellen… 0/25');
+    updateOcrProgress(0, 25, 'Erkenne Zellen… 0/25');
+
+    const nums = await ocrBingoGridFromCanvas(canvas);
+
+    /* Fortschritt garantiert bis 100 % */
+    updateOcrProgress(25, 25, 'Fertig erkannt');
+    safeSetStatus('Fertig erkannt');
+    await new Promise(r => setTimeout(r, 400));
+
+    const recognized = nums.filter(n => Number.isInteger(n)).length;
+
+    const nb = emptyBoard();
+    for (let r=0;r<5;r++) for (let c=0;c<5;c++){
+      const n = nums[r*5+c];
+      nb[r][c] = Number.isInteger(n) ? String(n) : "";
+    }
+    board = nb;
+    localStorage.setItem("bingo-board", JSON.stringify(board));
+    renderBoard(); boardTouched = true; validateBoard();
+
+    // zum Board springen
+    goTo('page-schein');
+    document.getElementById('board')?.scrollIntoView({behavior:'smooth', block:'start'});
+    boardEl.querySelector('input')?.focus();
+
+    hideOcrOverlay(); // Loader weg, dann Modal zeigen
+    if (recognized >= 22) {
+      await modalAlert('✓ Zahlen erkannt. Bitte kurz prüfen.');
+    } else if (recognized >= 15) {
+      await modalAlert(`Teilweise erkannt (${recognized}/25).<br>Tipp: Rahmen enger/gerader ausrichten, ggf. minimal größer.`);
+    } else {
+      await modalAlert(`Schwache Erkennung (${recognized}/25).<br>Näher zoomen, Licht erhöhen, Rahmen enger & parallel.`);
+    }
+    safeSetStatus('');
+
+  } catch(err){
+    console.error(err);
+    safeSetStatus('');
+    hideOcrOverlay();
+    await modalAlert('Konnte nicht zuverlässig erkennen. Rahmen enger/gerader ausrichten und erneut versuchen.');
+  } finally {
+    alignMode = false;
+    updateButtons();
+  }
+});
+
+document.addEventListener("click",(e)=>{
+  if(e.target && e.target.id==="goToNumbersBtn"){ goTo("page-draw"); }
+  if(e.target && e.target.id==="goCreateTicket"){ goTo("page-schein"); }
+});
+
+(function init(){
+  renderBoard(); renderTickets(); renderDrawnSummaryBar(); renderOverview(); renderPicker(); updateTicketCounts();
+  if(localStorage.getItem(K_LAST_TOTAL)===null){ const dset=new Set(loadDrawn()); let total=0; loadTickets().forEach(t=>{ total+=evaluateTicket(t.board,dset).length; }); localStorage.setItem(K_LAST_TOTAL,String(total)); }
+})();
+</script>
+</body>
+</html>
